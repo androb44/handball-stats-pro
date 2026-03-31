@@ -1,14 +1,8 @@
-// PDF Export — light theme, per-player shot zones, GK zone conceded
-
 import { jsPDF } from 'jspdf';
 
-// ─── SHOT ZONE LABELS ───
 const ZONE_SHORT = {
   lw: "LK", l6: "L6m", l9: "L9m", c6: "C6m", c9: "C9m",
   r6: "D6m", r9: "D9m", rw: "DK", "7m": "7m", unknown: "?",
-};
-const GK_ZONE_SHORT = {
-  tl: "↑L", tc: "↑C", tr: "↑D", bl: "↓L", bc: "↓C", br: "↓D", unknown: "?",
 };
 
 function isGoalEvent(e) {
@@ -47,18 +41,9 @@ function getPlayerStats(match, side) {
     const fb = pe.filter(e => e.type === "fast_break");
     const goals = pe.filter(e => ["goal","penalty_goal"].includes(e.type)).length + fb.filter(e => e.outcome === "goal").length;
     const shots = pe.filter(e => ["goal","shot_missed","shot_blocked","shot_post","penalty_goal","penalty_miss"].includes(e.type)).length + fb.filter(e => e.outcome).length;
-
-    // Shot zone breakdown (goals only)
     const goalEvents = pe.filter(isGoalEvent);
     const shotZones = {};
-    goalEvents.forEach(e => {
-      const z = e.shotZone || "unknown";
-      shotZones[z] = (shotZones[z] || 0) + 1;
-    });
-
-    // GK: goals conceded by zone (from opponent's shot events that have gkZone — or check opponent goal events)
-    const isGK = p.position === "GK";
-
+    goalEvents.forEach(e => { const z = e.shotZone || "unknown"; shotZones[z] = (shotZones[z] || 0) + 1; });
     return {
       number: p.number, name: p.name, position: p.position,
       goals, shots, efficiency: shots ? Math.round((goals / shots) * 100) : 0,
@@ -69,98 +54,106 @@ function getPlayerStats(match, side) {
       fouls: pe.filter(e => e.type === "foul_committed").length,
       yellowCards: pe.filter(e => e.type === "yellow_card").length,
       suspensions: pe.filter(e => e.type === "suspension").length,
-      shotZones, isGK,
+      shotZones, isGK: p.position === "GK",
     };
   }).sort((a, b) => b.goals - a.goals || b.assists - a.assists);
 }
 
-// Get goals conceded by the opposing team, broken down by GK zone from the save perspective
-// Since we track shotZone on goals, we look at opponent goals and their shotZone
 function getGKConcededZones(match, side) {
   const oppSide = side === "home" ? "away" : "home";
   const oppGoals = match.events.filter(e => e.side === oppSide && isGoalEvent(e));
   const zones = {};
-  oppGoals.forEach(e => {
-    const z = e.shotZone || "unknown";
-    zones[z] = (zones[z] || 0) + 1;
-  });
+  oppGoals.forEach(e => { const z = e.shotZone || "unknown"; zones[z] = (zones[z] || 0) + 1; });
   return zones;
 }
 
-function formatZoneBreakdown(zones, labels) {
+function formatZoneBreakdown(zones) {
   const parts = [];
   for (const [z, count] of Object.entries(zones)) {
     if (z === "unknown" || !count) continue;
-    parts.push(`${labels[z] || z}: ${count}`);
+    parts.push((ZONE_SHORT[z] || z) + ": " + count);
   }
   return parts.length ? parts.join(", ") : "-";
 }
 
-export async function exportMatchPDF(match) {
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+// Safe font setter — only uses "bold" or "normal"
+function setFont(doc, style) {
+  try {
+    doc.setFont("helvetica", style === "bold" ? "bold" : "normal");
+  } catch (e) {
+    doc.setFont("helvetica", "normal");
+  }
+}
 
-  const W = 210, H = 297, mg = 15;
+export async function exportMatchPDF(match) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+  const W = 210;
+  const H = 297;
+  const mg = 15;
   let y = 0;
 
-  const black = [30, 30, 30];
-  const darkGray = [60, 60, 60];
-  const midGray = [120, 120, 120];
-  const lightGray = [200, 200, 200];
-  const bgStripe = [245, 245, 248];
-  const headerBg = [25, 35, 55];
-  const homeColor = [0, 130, 90];
-  const awayColor = [190, 40, 70];
-  const zoneColor = [50, 90, 160];
-
-  const checkPage = (needed) => { if (y > H - needed) { doc.addPage(); y = mg; } };
-
-  const sectionTitle = (text, yPos) => {
-    checkPage(20);
-    doc.setFillColor(235, 237, 242);
-    doc.roundedRect(mg, yPos, W - mg * 2, 8, 1.5, 1.5, 'F');
-    doc.setTextColor(...black);
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
-    doc.text(text, W / 2, yPos + 5.5, { align: "center" });
-    return yPos + 12;
-  };
+  function checkPage(needed) {
+    if (y > H - needed) { doc.addPage(); y = mg; }
+  }
 
   // ─── HEADER ───
-  doc.setFillColor(...headerBg);
-  doc.rect(0, 0, W, 44, 'F');
+  doc.setFillColor(25, 35, 55);
+  doc.rect(0, 0, W, 44, "F");
+
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(20);
-  doc.setFont("helvetica", "bold");
+  setFont(doc, "bold");
   doc.text("HANDBALL STATS PRO", W / 2, 13, { align: "center" });
+
   doc.setFontSize(9);
   doc.setTextColor(180, 190, 200);
+  setFont(doc, "normal");
   doc.text("Izvjestaj sa utakmice", W / 2, 20, { align: "center" });
-  doc.text(new Date(match.date).toLocaleDateString("sr-Latn", { weekday: "long", year: "numeric", month: "long", day: "numeric" }), W / 2, 26, { align: "center" });
 
+  var dateStr = "";
+  try { dateStr = new Date(match.date).toLocaleDateString("sr-Latn", { weekday: "long", year: "numeric", month: "long", day: "numeric" }); }
+  catch (e) { dateStr = match.date; }
+  doc.text(dateStr, W / 2, 26, { align: "center" });
+
+  // Teams + Score
   doc.setFontSize(13);
-  doc.setFont("helvetica", "bold");
+  setFont(doc, "bold");
   doc.setTextColor(100, 220, 180);
   doc.text(match.homeTeam.name, 40, 35, { align: "center" });
   doc.setTextColor(255, 140, 160);
   doc.text(match.awayTeam.name, W - 40, 35, { align: "center" });
+
   doc.setFontSize(24);
   doc.setTextColor(255, 255, 255);
-  doc.text(`${match.homeTeam.score}`, W / 2 - 12, 37, { align: "center" });
+  doc.text(String(match.homeTeam.score), W / 2 - 12, 37, { align: "center" });
   doc.setFontSize(14);
   doc.setTextColor(180, 190, 200);
   doc.text(":", W / 2, 36, { align: "center" });
   doc.setFontSize(24);
   doc.setTextColor(255, 255, 255);
-  doc.text(`${match.awayTeam.score}`, W / 2 + 12, 37, { align: "center" });
+  doc.text(String(match.awayTeam.score), W / 2 + 12, 37, { align: "center" });
 
   y = 52;
 
-  // ─── TEAM STATS ───
-  y = sectionTitle("STATISTIKA TIMOVA", y);
-  const hs = getTeamStats(match.events, "home");
-  const as = getTeamStats(match.events, "away");
+  // ─── SECTION TITLE HELPER ───
+  function sectionTitle(text) {
+    checkPage(20);
+    doc.setFillColor(235, 237, 242);
+    doc.rect(mg, y, W - mg * 2, 8, "F");
+    doc.setTextColor(30, 30, 30);
+    doc.setFontSize(10);
+    setFont(doc, "bold");
+    doc.text(text, W / 2, y + 5.5, { align: "center" });
+    y += 12;
+  }
 
-  const statRows = [
+  // ─── TEAM STATS ───
+  sectionTitle("STATISTIKA TIMOVA");
+  var hs = getTeamStats(match.events, "home");
+  var as = getTeamStats(match.events, "away");
+
+  var statRows = [
     ["Golovi", hs.goals, as.goals],
     ["Sutevi", hs.shots, as.shots],
     ["Efikasnost", hs.efficiency + "%", as.efficiency + "%"],
@@ -169,7 +162,7 @@ export async function exportMatchPDF(match) {
     ["Ukradene lopte", hs.steals, as.steals],
     ["Blokade", hs.blocks, as.blocks],
     ["Izgubljene lopte", hs.turnovers, as.turnovers],
-    ["Kontranapadi", `${hs.fastBreakGoals}/${hs.fastBreaks}`, `${as.fastBreakGoals}/${as.fastBreaks}`],
+    ["Kontranapadi", hs.fastBreakGoals + "/" + hs.fastBreaks, as.fastBreakGoals + "/" + as.fastBreaks],
     ["Prodori", hs.breakthroughs, as.breakthroughs],
     ["Faulovi", hs.foulsCommitted, as.foulsCommitted],
     ["Zuti kartoni", hs.yellowCards, as.yellowCards],
@@ -180,157 +173,205 @@ export async function exportMatchPDF(match) {
   ];
 
   doc.setFontSize(9);
-  statRows.forEach(([label, home, away], idx) => {
+  for (var si = 0; si < statRows.length; si++) {
     checkPage(8);
-    if (idx % 2 === 0) { doc.setFillColor(...bgStripe); doc.rect(mg, y - 3.5, W - mg * 2, 6, 'F'); }
-    doc.setTextColor(...homeColor); doc.setFont("helvetica", "bold");
-    doc.text(`${home}`, mg + 22, y, { align: "center" });
-    doc.setTextColor(...darkGray); doc.setFont("helvetica", "normal");
-    doc.text(label, W / 2, y, { align: "center" });
-    doc.setTextColor(...awayColor); doc.setFont("helvetica", "bold");
-    doc.text(`${away}`, W - mg - 22, y, { align: "center" });
+    var row = statRows[si];
+    if (si % 2 === 0) { doc.setFillColor(245, 245, 248); doc.rect(mg, y - 3.5, W - mg * 2, 6, "F"); }
+
+    doc.setTextColor(0, 130, 90);
+    setFont(doc, "bold");
+    doc.text(String(row[1]), mg + 22, y, { align: "center" });
+
+    doc.setTextColor(60, 60, 60);
+    setFont(doc, "normal");
+    doc.text(row[0], W / 2, y, { align: "center" });
+
+    doc.setTextColor(190, 40, 70);
+    setFont(doc, "bold");
+    doc.text(String(row[2]), W - mg - 22, y, { align: "center" });
+
     y += 6;
-  });
+  }
 
   y += 8;
 
-  // ─── PLAYER STATS + SHOT ZONES ───
-  for (const side of ["home", "away"]) {
-    const teamName = match[side === "home" ? "homeTeam" : "awayTeam"].name;
-    const color = side === "home" ? homeColor : awayColor;
-    const ps = getPlayerStats(match, side);
-    const gkConceded = getGKConcededZones(match, side);
+  // ─── PLAYER STATS ───
+  for (var ti = 0; ti < 2; ti++) {
+    var side = ti === 0 ? "home" : "away";
+    var teamName = match[side === "home" ? "homeTeam" : "awayTeam"].name;
+    var teamColor = side === "home" ? [0, 130, 90] : [190, 40, 70];
+    var ps = getPlayerStats(match, side);
+    var gkConceded = getGKConcededZones(match, side);
 
-    y = sectionTitle(teamName.toUpperCase(), y);
+    sectionTitle(teamName.toUpperCase());
 
     // Table header
-    const cols = ["#", "Ime", "Poz", "G", "S", "%", "A", "Od", "Uk", "Il", "F", "ZK", "2m"];
-    const colW = [10, 36, 12, 10, 10, 10, 12, 10, 10, 10, 10, 10, 10];
-    let cx = mg;
-    doc.setFontSize(7); doc.setFont("helvetica", "bold"); doc.setTextColor(...midGray);
-    for (let i = 0; i < cols.length; i++) { doc.text(cols[i], cx + colW[i] / 2, y, { align: "center" }); cx += colW[i]; }
+    var cols = ["#", "Ime", "Poz", "G", "S", "%", "A", "Od", "Uk", "Il", "F", "ZK", "2m"];
+    var colW = [10, 36, 12, 10, 10, 10, 12, 10, 10, 10, 10, 10, 10];
+    var cx = mg;
+
+    doc.setFontSize(7);
+    setFont(doc, "bold");
+    doc.setTextColor(120, 120, 120);
+    for (var ci = 0; ci < cols.length; ci++) {
+      doc.text(cols[ci], cx + colW[ci] / 2, y, { align: "center" });
+      cx += colW[ci];
+    }
     y += 1;
-    doc.setDrawColor(...lightGray); doc.line(mg, y, W - mg, y);
+    doc.setDrawColor(200, 200, 200);
+    doc.line(mg, y, W - mg, y);
     y += 3.5;
 
     // Player rows
     doc.setFontSize(7);
-    for (const p of ps) {
-      // Main row needs ~5.5mm, zone row needs ~4.5mm
-      const hasZones = p.goals > 0 && Object.keys(p.shotZones).some(z => z !== "unknown");
-      const hasGkZones = p.isGK && Object.keys(gkConceded).some(z => z !== "unknown");
-      const extraRows = (hasZones ? 1 : 0) + (hasGkZones ? 1 : 0);
-      checkPage(6 + extraRows * 5);
+    for (var pi = 0; pi < ps.length; pi++) {
+      var p = ps[pi];
+      var hasZones = p.goals > 0 && Object.keys(p.shotZones).some(function(z) { return z !== "unknown"; });
+      var hasGkZones = p.isGK && Object.keys(gkConceded).some(function(z) { return z !== "unknown"; });
+      var extraH = (hasZones ? 4.5 : 0) + (hasGkZones ? 4.5 : 0);
+      checkPage(6 + extraH);
 
       // Zebra
-      const rowH = 5.5 + extraRows * 4.5;
-      if (ps.indexOf(p) % 2 === 0) { doc.setFillColor(...bgStripe); doc.rect(mg, y - 3, W - mg * 2, rowH, 'F'); }
+      if (pi % 2 === 0) {
+        doc.setFillColor(245, 245, 248);
+        doc.rect(mg, y - 3, W - mg * 2, 5.5 + extraH, "F");
+      }
 
       cx = mg;
-      const vals = [p.number, p.name, p.position, p.goals || "-", p.shots || "-", p.efficiency ? p.efficiency + "%" : "-", p.assists || "-", p.saves || "-", p.steals || "-", p.turnovers || "-", p.fouls || "-", p.yellowCards || "-", p.suspensions || "-"];
-      for (let i = 0; i < vals.length; i++) {
-        if (i === 3 && p.goals > 0) { doc.setFont("helvetica", "bold"); doc.setTextColor(...color); }
-        else { doc.setFont("helvetica", "normal"); doc.setTextColor(...black); }
-        const tx = i === 1 ? cx + 1 : cx + colW[i] / 2;
-        doc.text(`${vals[i]}`, tx, y, { align: i === 1 ? "left" : "center" });
-        cx += colW[i];
+      var vals = [
+        String(p.number), p.name, p.position,
+        p.goals ? String(p.goals) : "-",
+        p.shots ? String(p.shots) : "-",
+        p.efficiency ? p.efficiency + "%" : "-",
+        p.assists ? String(p.assists) : "-",
+        p.saves ? String(p.saves) : "-",
+        p.steals ? String(p.steals) : "-",
+        p.turnovers ? String(p.turnovers) : "-",
+        p.fouls ? String(p.fouls) : "-",
+        p.yellowCards ? String(p.yellowCards) : "-",
+        p.suspensions ? String(p.suspensions) : "-"
+      ];
+
+      for (var vi = 0; vi < vals.length; vi++) {
+        if (vi === 3 && p.goals > 0) {
+          setFont(doc, "bold");
+          doc.setTextColor(teamColor[0], teamColor[1], teamColor[2]);
+        } else {
+          setFont(doc, "normal");
+          doc.setTextColor(30, 30, 30);
+        }
+        var tx = vi === 1 ? cx + 1 : cx + colW[vi] / 2;
+        var align = vi === 1 ? "left" : "center";
+        doc.text(vals[vi], tx, y, { align: align });
+        cx += colW[vi];
       }
       y += 5.5;
 
-      // Shot zone breakdown line
+      // Shot zone line
       if (hasZones) {
-        const zoneStr = formatZoneBreakdown(p.shotZones, ZONE_SHORT);
         doc.setFontSize(6.5);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(...zoneColor);
-        doc.text(`Golovi po poziciji: ${zoneStr}`, mg + 12, y, { align: "left" });
+        setFont(doc, "normal");
+        doc.setTextColor(50, 90, 160);
+        doc.text("Golovi po poziciji: " + formatZoneBreakdown(p.shotZones), mg + 12, y);
         y += 4.5;
       }
 
-      // GK conceded zones line
+      // GK conceded line
       if (hasGkZones) {
-        const gkStr = formatZoneBreakdown(gkConceded, ZONE_SHORT);
         doc.setFontSize(6.5);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(...awayColor);
-        doc.text(`Primljeni golovi po poziciji: ${gkStr}`, mg + 12, y, { align: "left" });
+        setFont(doc, "normal");
+        doc.setTextColor(190, 40, 70);
+        doc.text("Primljeni golovi po poziciji: " + formatZoneBreakdown(gkConceded), mg + 12, y);
         y += 4.5;
       }
+
+      doc.setFontSize(7);
     }
 
-    // Bottom border
-    doc.setDrawColor(...lightGray); doc.line(mg, y, W - mg, y);
+    doc.setDrawColor(200, 200, 200);
+    doc.line(mg, y, W - mg, y);
     y += 10;
   }
 
-  // ─── SHOT MAP SUMMARY (per team) ───
-  for (const side of ["home", "away"]) {
-    checkPage(50);
-    const teamName = match[side === "home" ? "homeTeam" : "awayTeam"].name;
-    const color = side === "home" ? homeColor : awayColor;
+  // ─── SHOT MAP PER TEAM ───
+  var zones = ["lw", "l6", "l9", "c6", "c9", "r6", "r9", "rw", "7m"];
+  var zLabels = { lw: "L.krilo", l6: "L.6m", l9: "L.9m", c6: "C.6m", c9: "C.9m", r6: "D.6m", r9: "D.9m", rw: "D.krilo", "7m": "7m" };
 
-    y = sectionTitle(`MAPA SUTEVA — ${teamName.toUpperCase()}`, y);
+  for (var mi = 0; mi < 2; mi++) {
+    var mSide = mi === 0 ? "home" : "away";
+    var mName = match[mSide === "home" ? "homeTeam" : "awayTeam"].name;
+    var mColor = mSide === "home" ? [0, 130, 90] : [190, 40, 70];
 
-    // Collect all goals by zone for this team
-    const teamGoals = match.events.filter(e => e.side === side && isGoalEvent(e));
-    const teamMisses = match.events.filter(e => e.side === side && ["shot_missed","shot_blocked","shot_post","penalty_miss"].includes(e.type));
+    checkPage(40);
+    sectionTitle("MAPA SUTEVA - " + mName.toUpperCase());
 
-    const zoneGoals = {};
-    const zoneMisses = {};
-    teamGoals.forEach(e => { const z = e.shotZone || "unknown"; zoneGoals[z] = (zoneGoals[z] || 0) + 1; });
-    teamMisses.forEach(e => { const z = e.shotZone || "unknown"; zoneMisses[z] = (zoneMisses[z] || 0) + 1; });
+    var teamGoals = match.events.filter(function(e) { return e.side === mSide && isGoalEvent(e); });
+    var teamMisses = match.events.filter(function(e) { return e.side === mSide && ["shot_missed","shot_blocked","shot_post","penalty_miss"].includes(e.type); });
 
-    // Draw zone table
-    const zones = ["lw", "l6", "l9", "c6", "c9", "r6", "r9", "rw", "7m"];
-    const zoneLabels = { lw: "L. krilo", l6: "L. 6m", l9: "L. 9m", c6: "C. 6m", c9: "C. 9m", r6: "D. 6m", r9: "D. 9m", rw: "D. krilo", "7m": "7m" };
+    var zGoals = {};
+    var zMisses = {};
+    teamGoals.forEach(function(e) { var z = e.shotZone || "unknown"; zGoals[z] = (zGoals[z] || 0) + 1; });
+    teamMisses.forEach(function(e) { var z = e.shotZone || "unknown"; zMisses[z] = (zMisses[z] || 0) + 1; });
+
+    var zcW = (W - mg * 2) / 10;
 
     // Header
-    const zcW = (W - mg * 2) / 10;
-    let zx = mg;
-    doc.setFontSize(7); doc.setFont("helvetica", "bold"); doc.setTextColor(...midGray);
+    var zx = mg;
+    doc.setFontSize(7);
+    setFont(doc, "bold");
+    doc.setTextColor(120, 120, 120);
     doc.text("Zona", zx + zcW / 2, y, { align: "center" });
     zx += zcW;
-    for (const z of zones) { doc.text(zoneLabels[z], zx + zcW / 2, y, { align: "center" }); zx += zcW; }
+    for (var zi = 0; zi < zones.length; zi++) {
+      doc.text(zLabels[zones[zi]], zx + zcW / 2, y, { align: "center" });
+      zx += zcW;
+    }
     y += 1;
-    doc.setDrawColor(...lightGray); doc.line(mg, y, W - mg, y);
+    doc.setDrawColor(200, 200, 200);
+    doc.line(mg, y, W - mg, y);
     y += 4;
 
     // Goals row
     zx = mg;
-    doc.setFontSize(7.5); doc.setFont("helvetica", "bold"); doc.setTextColor(...color);
+    doc.setFontSize(7.5);
+    setFont(doc, "bold");
+    doc.setTextColor(mColor[0], mColor[1], mColor[2]);
     doc.text("Golovi", zx + zcW / 2, y, { align: "center" });
     zx += zcW;
-    for (const z of zones) {
-      const v = zoneGoals[z] || 0;
-      doc.setTextColor(v > 0 ? [...color] : [...midGray]);
-      doc.text(`${v}`, zx + zcW / 2, y, { align: "center" });
+    for (var gi = 0; gi < zones.length; gi++) {
+      var gv = zGoals[zones[gi]] || 0;
+      if (gv > 0) { doc.setTextColor(mColor[0], mColor[1], mColor[2]); }
+      else { doc.setTextColor(120, 120, 120); }
+      doc.text(String(gv), zx + zcW / 2, y, { align: "center" });
       zx += zcW;
     }
     y += 5;
 
     // Misses row
     zx = mg;
-    doc.setFont("helvetica", "normal"); doc.setTextColor(...darkGray);
+    setFont(doc, "normal");
+    doc.setTextColor(60, 60, 60);
     doc.text("Prom.", zx + zcW / 2, y, { align: "center" });
     zx += zcW;
-    for (const z of zones) {
-      const v = zoneMisses[z] || 0;
-      doc.setTextColor(v > 0 ? [...darkGray] : [...midGray]);
-      doc.text(`${v}`, zx + zcW / 2, y, { align: "center" });
+    for (var mmi = 0; mmi < zones.length; mmi++) {
+      var mv = zMisses[zones[mmi]] || 0;
+      if (mv > 0) { doc.setTextColor(60, 60, 60); } else { doc.setTextColor(120, 120, 120); }
+      doc.text(String(mv), zx + zcW / 2, y, { align: "center" });
       zx += zcW;
     }
     y += 5;
 
     // Efficiency row
     zx = mg;
-    doc.setFont("helvetica", "normal"); doc.setTextColor(...zoneColor);
+    setFont(doc, "normal");
+    doc.setTextColor(50, 90, 160);
     doc.text("Efik.", zx + zcW / 2, y, { align: "center" });
     zx += zcW;
-    for (const z of zones) {
-      const g = zoneGoals[z] || 0;
-      const m = zoneMisses[z] || 0;
-      const total = g + m;
-      const eff = total > 0 ? Math.round((g / total) * 100) + "%" : "-";
+    for (var ei = 0; ei < zones.length; ei++) {
+      var eg = zGoals[zones[ei]] || 0;
+      var em = zMisses[zones[ei]] || 0;
+      var et = eg + em;
+      var eff = et > 0 ? Math.round((eg / et) * 100) + "%" : "-";
       doc.text(eff, zx + zcW / 2, y, { align: "center" });
       zx += zcW;
     }
@@ -338,16 +379,19 @@ export async function exportMatchPDF(match) {
   }
 
   // ─── FOOTER ───
-  const pageCount = doc.internal.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    doc.setDrawColor(...lightGray); doc.line(mg, H - 12, W - mg, H - 12);
-    doc.setFontSize(7); doc.setTextColor(...midGray); doc.setFont("helvetica", "normal");
+  var pageCount = doc.internal.getNumberOfPages();
+  for (var fi = 1; fi <= pageCount; fi++) {
+    doc.setPage(fi);
+    doc.setDrawColor(200, 200, 200);
+    doc.line(mg, H - 12, W - mg, H - 12);
+    doc.setFontSize(7);
+    doc.setTextColor(120, 120, 120);
+    setFont(doc, "normal");
     doc.text("HandballStats Pro", mg, H - 7);
-    doc.text(`${match.homeTeam.name} vs ${match.awayTeam.name}`, W / 2, H - 7, { align: "center" });
-    doc.text(`Stranica ${i}/${pageCount}`, W - mg, H - 7, { align: "right" });
+    doc.text(match.homeTeam.name + " vs " + match.awayTeam.name, W / 2, H - 7, { align: "center" });
+    doc.text("Stranica " + fi + "/" + pageCount, W - mg, H - 7, { align: "right" });
   }
 
-  const filename = `${match.homeTeam.name}_vs_${match.awayTeam.name}_${new Date(match.date).toLocaleDateString("sr-Latn").replace(/\./g, "-")}.pdf`;
+  var filename = match.homeTeam.name + "_vs_" + match.awayTeam.name + ".pdf";
   doc.save(filename);
 }
