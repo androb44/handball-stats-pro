@@ -10,6 +10,8 @@ export const EVENT_TYPES = {
   TURNOVER: { id: "turnover", label: "Izgubljena lopta", icon: "💫", color: "#FF6E40", category: "offense" },
   FOUL_COMMITTED: { id: "foul_committed", label: "Napravljeni faul", icon: "⚠", color: "#FFAB40", category: "foul" },
   FOUL_RECEIVED: { id: "foul_received", label: "Pretrpljeni faul", icon: "💥", color: "#40C4FF", category: "foul" },
+  FOUL_7M_COMMITTED: { id: "foul_7m_committed", label: "Faul za 7m (skrivio)", icon: "🎯⚠", color: "#FF6D00", category: "foul" },
+  FOUL_7M_RECEIVED: { id: "foul_7m_received", label: "Faul za 7m (nad njim)", icon: "🎯💥", color: "#00B0FF", category: "foul" },
   YELLOW_CARD: { id: "yellow_card", label: "Žuti karton", icon: "🟨", color: "#FFD600", category: "discipline" },
   RED_CARD: { id: "red_card", label: "Crveni karton", icon: "🟥", color: "#D50000", category: "discipline" },
   SUSPENSION: { id: "suspension", label: "Isključenje 2min", icon: "⏱", color: "#FF1744", category: "discipline" },
@@ -21,6 +23,12 @@ export const EVENT_TYPES = {
   TECHNICAL_FOUL: { id: "technical_foul", label: "Tehnički faul", icon: "📋", color: "#B388FF", category: "foul" },
   PASSIVE_PLAY: { id: "passive_play", label: "Pasivna igra", icon: "🐢", color: "#A1887F", category: "action" },
 };
+
+// Events available to GK in offense (only goal and assist)
+export const GK_OFFENSE_EVENTS = ["goal", "assist"];
+
+// Events hidden from field players in defense (save is GK-only)
+export const FIELD_HIDDEN_DEFENSE = ["save", "penalty_save"];
 
 export const POSITIONS = ["LW", "LB", "CB", "RB", "RW", "P", "GK"];
 
@@ -37,3 +45,7 @@ export const EVENT_CATEGORIES = [
   { id: "discipline", label: "Kartoni", icon: "🟨" },
   { id: "action", label: "Akcije", icon: "⚡" },
 ];
+
+// Categories available per position
+export const GK_CATEGORIES = ["offense", "defense", "penalty", "foul", "discipline"];
+export const FIELD_CATEGORIES = ["offense", "defense", "penalty", "foul", "discipline", "action"];

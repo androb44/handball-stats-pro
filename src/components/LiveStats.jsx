@@ -136,13 +136,13 @@ export default function LiveStats({ match, onBack }) {
                     <thead><tr style={{ color: theme.textDim }}>
                       <th style={{ textAlign: "left", padding: "6px 4px", fontWeight: 500 }}>#</th>
                       <th style={{ textAlign: "left", padding: "6px 4px", fontWeight: 500 }}>Ime</th>
-                      <th style={thStyle}>G</th><th style={thStyle}>A</th><th style={thStyle}>Š</th><th style={thStyle}>%</th><th style={thStyle}>Od</th><th style={thStyle}>Uk</th><th style={thStyle}>Il</th><th style={thStyle}>F</th><th style={thStyle}>🟨</th><th style={thStyle}>⏱</th>
+                      <th style={thStyle}>G</th><th style={thStyle}>Š</th><th style={thStyle}>%</th><th style={thStyle}>A</th><th style={thStyle}>Od</th><th style={thStyle}>Uk</th><th style={thStyle}>Il</th><th style={thStyle}>F</th><th style={thStyle}>🟨</th><th style={thStyle}>⏱</th>
                     </tr></thead>
                     <tbody>{ps.map(p => (
                       <tr key={p.id} style={{ borderTop: `1px solid ${theme.border}` }}>
                         <td style={{ padding: "6px 4px", fontWeight: 700 }}>{p.number}</td>
                         <td style={{ padding: "6px 4px", fontFamily: font, fontSize: 11, maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</td>
-                        <td style={tdStyle}>{p.goals||""}</td><td style={tdStyle}>{p.assists||""}</td><td style={tdStyle}>{p.shots||""}</td><td style={tdStyle}>{p.shots?Math.round((p.goals/p.shots)*100):""}</td><td style={tdStyle}>{p.saves||""}</td><td style={tdStyle}>{p.steals||""}</td><td style={tdStyle}>{p.turnovers||""}</td><td style={tdStyle}>{p.fouls||""}</td><td style={tdStyle}>{p.yellowCards||""}</td><td style={tdStyle}>{p.suspensions||""}</td>
+                        <td style={tdStyle}>{p.goals||""}</td><td style={tdStyle}>{p.shots||""}</td><td style={tdStyle}>{p.shots?Math.round((p.goals/p.shots)*100):""}</td><td style={tdStyle}>{p.assists||""}</td><td style={tdStyle}>{p.saves||""}</td><td style={tdStyle}>{p.steals||""}</td><td style={tdStyle}>{p.turnovers||""}</td><td style={tdStyle}>{p.fouls||""}</td><td style={tdStyle}>{p.yellowCards||""}</td><td style={tdStyle}>{p.suspensions||""}</td>
                       </tr>
                     ))}</tbody>
                   </table>
@@ -150,7 +150,7 @@ export default function LiveStats({ match, onBack }) {
               </div>
             );
           })}
-          <div style={{ fontSize: 10, color: theme.textDim, marginTop: 4, gridColumn: isTablet || isDesktop ? "1 / -1" : undefined }}>G=Golovi A=Asist Š=Šutevi %=Efikasnost Od=Odbrane Uk=Ukradene Il=Izgubljene F=Faulovi</div>
+          <div style={{ fontSize: 10, color: theme.textDim, marginTop: 4, gridColumn: isTablet || isDesktop ? "1 / -1" : undefined }}>G=Golovi Š=Šutevi %=Efikasnost A=Asist Od=Odbrane Uk=Ukradene Il=Izgubljene F=Faulovi</div>
         </div>
       )}
 

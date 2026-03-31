@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import LiveStats from './LiveStats';
 import { ShotZonePicker, GoalkeeperZonePicker } from './ShotZonePicker';
-import { EVENT_TYPES, EVENT_CATEGORIES } from '../constants';
+import { EVENT_TYPES, EVENT_CATEGORIES, GK_OFFENSE_EVENTS, FIELD_HIDDEN_DEFENSE, GK_CATEGORIES, FIELD_CATEGORIES } from '../constants';
 import { theme, mono, font, btnSmall } from '../styles';
 import { useResponsive } from '../hooks/useResponsive';
 
-// Events that need a shot zone after selection
 const SHOT_EVENTS = ["goal", "shot_missed", "shot_blocked", "shot_post", "penalty_goal", "penalty_miss"];
 const SAVE_EVENTS = ["save", "penalty_save"];
 const FAST_BREAK_OUTCOMES = [
@@ -23,16 +22,20 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
   const [showEventPanel, setShowEventPanel] = useState(false);
   const [undoStack, setUndoStack] = useState([]);
   const [showStats, setShowStats] = useState(false);
-  // Zone picker state
-  const [pendingEvent, setPendingEvent] = useState(null); // event waiting for zone
-  const [zoneStep, setZoneStep] = useState(null); // "shot_zone" | "gk_zone" | "fast_break"
+  const [pendingEvent, setPendingEvent] = useState(null);
+  const [zoneStep, setZoneStep] = useState(null);
   const timerRef = useRef(null);
   const autoSaveRef = useRef(null);
   const { isMobile, isDesktop, playerColumns } = useResponsive();
 
+  // Has the timer ever been started in this half?
+  const [matchStarted, setMatchStarted] = useState(false);
+
   useEffect(() => {
-    if (timerRunning) { timerRef.current = setInterval(() => { setMatch(prev => ({ ...prev, elapsedSeconds: prev.elapsedSeconds + 1 })); }, 1000); }
-    else { clearInterval(timerRef.current); }
+    if (timerRunning) {
+      if (!matchStarted) setMatchStarted(true);
+      timerRef.current = setInterval(() => { setMatch(prev => ({ ...prev, elapsedSeconds: prev.elapsedSeconds + 1 })); }, 1000);
+    } else { clearInterval(timerRef.current); }
     return () => clearInterval(timerRef.current);
   }, [timerRunning]);
 
@@ -45,10 +48,36 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
   const isTied = match.homeTeam.score === match.awayTeam.score;
   const halfLabel = match.currentHalf === 1 ? "1. poluvrijeme" : match.currentHalf === 2 ? "2. poluvrijeme" : match.currentHalf === 3 ? "1. produžetak" : match.currentHalf === 4 ? "2. produžetak" : `Produžetak ${match.currentHalf - 2}`;
 
-  // ─── EVENT HANDLING WITH ZONES ───
+  // Can events be added? Timer must be running (match in play)
+  const canAddEvent = timerRunning;
+
+  // ─── Determine which events to show based on player position ───
+  const isGK = selectedPlayer?.position === "GK";
+
+  const getFilteredCategories = () => {
+    const cats = isGK ? GK_CATEGORIES : FIELD_CATEGORIES;
+    return EVENT_CATEGORIES.filter(c => cats.includes(c.id));
+  };
+
+  const getFilteredEvents = (category) => {
+    let events = Object.values(EVENT_TYPES).filter(e => e.category === category);
+    if (isGK) {
+      // GK offense: only goal and assist
+      if (category === "offense") events = events.filter(e => GK_OFFENSE_EVENTS.includes(e.id));
+      // GK has no action category (already filtered out above)
+    } else {
+      // Field players: remove save/penalty_save from defense
+      if (category === "defense") events = events.filter(e => !FIELD_HIDDEN_DEFENSE.includes(e.id));
+    }
+    return events;
+  };
+
+  // ─── EVENT HANDLING ───
   const commitEvent = (eventData) => {
     const updated = { ...match, events: [...match.events, eventData] };
-    if (["goal", "penalty_goal"].includes(eventData.type)) {
+    // Score update: goals, penalty goals, AND fast break goals
+    if (["goal", "penalty_goal"].includes(eventData.type) ||
+        (eventData.type === "fast_break" && eventData.outcome === "goal")) {
       if (eventData.side === "home") updated.homeTeam = { ...updated.homeTeam, score: updated.homeTeam.score + 1 };
       else updated.awayTeam = { ...updated.awayTeam, score: updated.awayTeam.score + 1 };
     }
@@ -61,83 +90,53 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
   };
 
   const addEvent = (eventType) => {
-    if (!selectedPlayer) return;
+    if (!selectedPlayer || !canAddEvent) return;
     const baseEvent = {
       id: `e_${Date.now()}`, type: eventType.id, label: eventType.label, icon: eventType.icon,
       side: selectedSide, playerId: selectedPlayer?.id, playerName: selectedPlayer?.name, playerNumber: selectedPlayer?.number,
       time: match.elapsedSeconds, half: match.currentHalf, timestamp: new Date().toISOString(),
     };
 
-    // Fast break → ask for outcome
-    if (eventType.id === "fast_break") {
-      setPendingEvent(baseEvent);
-      setZoneStep("fast_break");
-      return;
-    }
-
-    // Shot events → ask for zone
-    if (SHOT_EVENTS.includes(eventType.id)) {
-      setPendingEvent(baseEvent);
-      setZoneStep("shot_zone");
-      return;
-    }
-
-    // Save events → ask for GK zone
-    if (SAVE_EVENTS.includes(eventType.id)) {
-      setPendingEvent(baseEvent);
-      setZoneStep("gk_zone");
-      return;
-    }
-
-    // Everything else → commit directly
+    if (eventType.id === "fast_break") { setPendingEvent(baseEvent); setZoneStep("fast_break"); return; }
+    if (SHOT_EVENTS.includes(eventType.id)) { setPendingEvent(baseEvent); setZoneStep("shot_zone"); return; }
+    if (SAVE_EVENTS.includes(eventType.id)) { setPendingEvent(baseEvent); setZoneStep("gk_zone"); return; }
     commitEvent(baseEvent);
   };
 
-  // Fast break outcome selected
   const handleFastBreakOutcome = (outcomeId) => {
     if (!pendingEvent) return;
     const outcome = FAST_BREAK_OUTCOMES.find(o => o.id === outcomeId);
     const updatedEvent = { ...pendingEvent, outcome: outcomeId, outcomeLabel: outcome.label };
-
-    // If it was a goal, also update the type so it counts as a goal in stats
     if (outcomeId === "goal") {
-      updatedEvent.type = "fast_break";
       updatedEvent.outcome = "goal";
-      // Ask for shot zone
       setPendingEvent(updatedEvent);
       setZoneStep("shot_zone");
       return;
     }
-    if (outcomeId === "save") {
-      updatedEvent.outcome = "save";
-      commitEvent(updatedEvent);
-      return;
-    }
-    // miss
-    updatedEvent.outcome = "miss";
+    if (outcomeId === "save") { updatedEvent.outcome = "save"; }
+    else { updatedEvent.outcome = "miss"; }
     commitEvent(updatedEvent);
   };
 
-  // Shot zone selected
   const handleShotZone = (zoneId, zoneLabel) => {
     if (!pendingEvent) return;
-    const updated = { ...pendingEvent, shotZone: zoneId, shotZoneLabel: zoneLabel };
-    commitEvent(updated);
+    commitEvent({ ...pendingEvent, shotZone: zoneId, shotZoneLabel: zoneLabel });
   };
 
-  // GK zone selected
   const handleGkZone = (zoneId, zoneLabel) => {
     if (!pendingEvent) return;
-    const updated = { ...pendingEvent, gkZone: zoneId, gkZoneLabel: zoneLabel };
-    commitEvent(updated);
+    commitEvent({ ...pendingEvent, gkZone: zoneId, gkZoneLabel: zoneLabel });
   };
 
   const cancelZone = () => { setPendingEvent(null); setZoneStep(null); };
 
   const addTimeout = (side) => {
+    if (!canAddEvent) return;
     const tk = side === "home" ? "homeTeam" : "awayTeam";
     const team = match[tk];
     if (team.timeoutsUsed >= team.timeouts) return;
+    // Timeout pauses the timer
+    setTimerRunning(false);
     const event = { id: `e_${Date.now()}`, type: "timeout", label: "Timeout", icon: "⏸", side, playerName: team.name, time: match.elapsedSeconds, half: match.currentHalf, timestamp: new Date().toISOString() };
     setUndoStack(prev => [...prev, match]);
     setMatch({ ...match, events: [...match.events, event], [tk]: { ...team, timeoutsUsed: team.timeoutsUsed + 1 } });
@@ -147,6 +146,7 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
 
   const nextHalf = () => {
     setTimerRunning(false);
+    setMatchStarted(false);
     if (match.currentHalf === 1) { setMatch(prev => ({ ...prev, currentHalf: 2, elapsedSeconds: 0 })); }
     else if (match.currentHalf >= 2 && isTied) { setMatch(prev => ({ ...prev, currentHalf: prev.currentHalf + 1, elapsedSeconds: 0 })); }
   };
@@ -154,7 +154,11 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
   const handleEndMatch = () => {
     setTimerRunning(false);
     if (match.currentHalf >= 2 && isTied) {
-      if (confirm("Rezultat je neriješen! Želiš li produžetke (2x5min)?")) { setMatch(prev => ({ ...prev, currentHalf: 3, elapsedSeconds: 0 })); return; }
+      if (confirm("Rezultat je neriješen! Želiš li produžetke (2x5min)?")) {
+        setMatchStarted(false);
+        setMatch(prev => ({ ...prev, currentHalf: 3, elapsedSeconds: 0 }));
+        return;
+      }
     }
     if (confirm("Završi utakmicu?")) onEnd(match);
   };
@@ -208,6 +212,18 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
   // ─── MAIN LAYOUT ───
   return (
     <div style={{ padding: "0 12px 120px", paddingTop: "env(safe-area-inset-top, 8px)" }}>
+      {/* Timer not running warning */}
+      {matchStarted && !timerRunning && (
+        <div style={{ background: theme.warning + "22", border: `1px solid ${theme.warning}44`, borderRadius: 10, padding: "8px 14px", marginBottom: 8, textAlign: "center" }}>
+          <span style={{ fontSize: 12, color: theme.warning, fontWeight: 600 }}>⏸ Tajmer pauziran — pokreni za unos događaja</span>
+        </div>
+      )}
+      {!matchStarted && (
+        <div style={{ background: theme.accent2 + "22", border: `1px solid ${theme.accent2}44`, borderRadius: 10, padding: "8px 14px", marginBottom: 8, textAlign: "center" }}>
+          <span style={{ fontSize: 12, color: theme.accent2, fontWeight: 600 }}>▶ Pokreni tajmer za početak utakmice</span>
+        </div>
+      )}
+
       {/* Scoreboard */}
       <div style={{ background: `linear-gradient(135deg, ${theme.surface}, ${theme.surface2})`, borderRadius: 18, padding: isMobile ? "14px 12px" : "16px 24px", marginBottom: 12, border: `1px solid ${theme.border}` }}>
         <div style={{ textAlign: "center", marginBottom: 6 }}>
@@ -219,7 +235,7 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
             <div style={{ fontSize: isMobile ? 38 : 48, fontWeight: 900, fontFamily: mono, lineHeight: 1 }}>{match.homeTeam.score}</div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-            <div style={{ fontFamily: mono, fontSize: isMobile ? 20 : 26, fontWeight: 700, color: timerRunning ? theme.accent : theme.textMuted, minWidth: 80, textAlign: "center" }}>{fmt(match.elapsedSeconds)}</div>
+            <div style={{ fontFamily: mono, fontSize: isMobile ? 20 : 26, fontWeight: 700, color: timerRunning ? theme.accent : theme.textMuted, minWidth: 80, textAlign: "center", animation: timerRunning ? undefined : !matchStarted ? undefined : "pulse 1.5s infinite" }}>{fmt(match.elapsedSeconds)}</div>
             <button onClick={() => setTimerRunning(!timerRunning)} style={{ background: timerRunning ? theme.danger + "33" : theme.success + "33", border: "none", borderRadius: 8, padding: "6px 14px", color: timerRunning ? theme.danger : theme.success, fontSize: 16, cursor: "pointer" }}>{timerRunning ? "⏸" : "▶"}</button>
           </div>
           <div style={{ flex: 1, textAlign: "center" }}>
@@ -228,24 +244,23 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
           </div>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, alignItems: "center" }}>
-          <button onClick={() => addTimeout("home")} style={{ ...btnSmall, fontSize: 10 }}>⏸ TO ({match.homeTeam.timeouts - match.homeTeam.timeoutsUsed})</button>
+          <button onClick={() => addTimeout("home")} disabled={!canAddEvent} style={{ ...btnSmall, fontSize: 10, opacity: canAddEvent ? 1 : 0.3 }}>⏸ TO ({match.homeTeam.timeouts - match.homeTeam.timeoutsUsed})</button>
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={undo} disabled={!undoStack.length} style={{ ...btnSmall, opacity: undoStack.length ? 1 : 0.3 }}>↩</button>
             <button onClick={() => setShowStats(true)} style={btnSmall}>📊</button>
             <button onClick={nextHalf} style={btnSmall}>⏭</button>
             <button onClick={handleEndMatch} style={{ ...btnSmall, color: theme.danger }}>🏁</button>
           </div>
-          <button onClick={() => addTimeout("away")} style={{ ...btnSmall, fontSize: 10 }}>⏸ TO ({match.awayTeam.timeouts - match.awayTeam.timeoutsUsed})</button>
+          <button onClick={() => addTimeout("away")} disabled={!canAddEvent} style={{ ...btnSmall, fontSize: 10, opacity: canAddEvent ? 1 : 0.3 }}>⏸ TO ({match.awayTeam.timeouts - match.awayTeam.timeoutsUsed})</button>
         </div>
       </div>
 
-      {/* Desktop: side-by-side, Mobile: stacked */}
       <div className="live-layout">
         <div className="live-left">
           {/* Team Toggle */}
           <div style={{ display: "flex", gap: 4, background: theme.surface, borderRadius: 12, padding: 4, marginBottom: 10 }}>
             {["home", "away"].map(s => (
-              <button key={s} onClick={() => { setSelectedSide(s); setSelectedPlayer(null); }} style={{ flex: 1, padding: "8px 0", borderRadius: 9, border: "none", background: selectedSide === s ? (s === "home" ? theme.accent + "22" : theme.accent3 + "22") : "transparent", color: selectedSide === s ? (s === "home" ? theme.accent : theme.accent3) : theme.textMuted, fontFamily: font, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{match[s === "home" ? "homeTeam" : "awayTeam"].name}</button>
+              <button key={s} onClick={() => { setSelectedSide(s); setSelectedPlayer(null); setShowEventPanel(false); }} style={{ flex: 1, padding: "8px 0", borderRadius: 9, border: "none", background: selectedSide === s ? (s === "home" ? theme.accent + "22" : theme.accent3 + "22") : "transparent", color: selectedSide === s ? (s === "home" ? theme.accent : theme.accent3) : theme.textMuted, fontFamily: font, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{match[s === "home" ? "homeTeam" : "awayTeam"].name}</button>
             ))}
           </div>
 
@@ -257,7 +272,7 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
               const goals = pe.filter(e => ["goal","penalty_goal"].includes(e.type)).length + pe.filter(e => e.type === "fast_break" && e.outcome === "goal").length;
               const sus = pe.filter(e => e.type === "suspension").length;
               return (
-                <button key={p.id} onClick={() => { setSelectedPlayer(isSel ? null : p); setShowEventPanel(!isSel); }} style={{ background: isSel ? (selectedSide === "home" ? theme.accent + "22" : theme.accent3 + "22") : theme.surface, border: `1.5px solid ${isSel ? (selectedSide === "home" ? theme.accent : theme.accent3) : theme.border}`, borderRadius: 12, padding: "10px 4px", cursor: "pointer", textAlign: "center" }}>
+                <button key={p.id} onClick={() => { setSelectedPlayer(isSel ? null : p); setShowEventPanel(!isSel); setEventCategory("offense"); }} style={{ background: isSel ? (selectedSide === "home" ? theme.accent + "22" : theme.accent3 + "22") : theme.surface, border: `1.5px solid ${isSel ? (selectedSide === "home" ? theme.accent : theme.accent3) : theme.border}`, borderRadius: 12, padding: "10px 4px", cursor: "pointer", textAlign: "center", opacity: canAddEvent ? 1 : 0.5 }}>
                   <div style={{ fontFamily: mono, fontSize: 18, fontWeight: 800, color: isSel ? (selectedSide === "home" ? theme.accent : theme.accent3) : theme.text }}>#{p.number || "?"}</div>
                   <div style={{ fontSize: 10, color: theme.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>{p.name}</div>
                   <div style={{ fontSize: 9, color: theme.textDim, marginTop: 2 }}>{p.position}</div>
@@ -270,17 +285,20 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
             })}
           </div>
 
-          {/* Event Panel */}
-          {showEventPanel && selectedPlayer && (
+          {/* Event Panel — filtered by position */}
+          {showEventPanel && selectedPlayer && canAddEvent && (
             <div style={{ background: theme.surface, borderRadius: 16, padding: 14, border: `1px solid ${theme.border}`, animation: "slideUp 0.2s ease" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: selectedSide === "home" ? theme.accent : theme.accent3 }}>#{selectedPlayer.number} {selectedPlayer.name}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: selectedSide === "home" ? theme.accent : theme.accent3 }}>
+                #{selectedPlayer.number} {selectedPlayer.name}
+                <span style={{ fontSize: 10, color: theme.textDim, fontWeight: 500, marginLeft: 6 }}>{selectedPlayer.position}</span>
+              </div>
               <div style={{ display: "flex", gap: 4, overflowX: "auto", marginBottom: 10, paddingBottom: 4 }}>
-                {EVENT_CATEGORIES.map(c => (
+                {getFilteredCategories().map(c => (
                   <button key={c.id} onClick={() => setEventCategory(c.id)} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${eventCategory === c.id ? theme.accent : theme.border}`, background: eventCategory === c.id ? theme.accent + "18" : "transparent", color: eventCategory === c.id ? theme.accent : theme.textMuted, fontFamily: font, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}>{c.icon} {c.label}</button>
                 ))}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                {Object.values(EVENT_TYPES).filter(e => e.category === eventCategory).map(et => (
+                {getFilteredEvents(eventCategory).map(et => (
                   <button key={et.id} onClick={() => addEvent(et)} style={{ background: et.color + "18", border: `1px solid ${et.color}44`, borderRadius: 10, padding: "12px 8px", cursor: "pointer", textAlign: "center", fontFamily: font }}>
                     <div style={{ fontSize: 20 }}>{et.icon}</div>
                     <div style={{ fontSize: 11, fontWeight: 600, color: et.color, marginTop: 4 }}>{et.label}</div>
@@ -292,7 +310,6 @@ export default function LiveMatch({ match: initialMatch, onSave, onEnd }) {
         </div>
 
         <div className="live-right">
-          {/* Event Log */}
           <div style={{ marginTop: isDesktop ? 0 : 12 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1 }}>Posljednji događaji</div>
             {match.events.length === 0 && <div style={{ padding: 20, textAlign: "center", color: theme.textDim, fontSize: 12 }}>Nema događaja</div>}
