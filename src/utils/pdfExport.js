@@ -1,18 +1,6 @@
 // PDF Export — light theme, per-player shot zones, GK zone conceded
 
-let jsPDFModule = null;
-
-async function loadJsPDF() {
-  if (jsPDFModule) return jsPDFModule;
-  return new Promise((resolve, reject) => {
-    if (window.jspdf) { jsPDFModule = window.jspdf; resolve(jsPDFModule); return; }
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-    s.onload = () => { jsPDFModule = window.jspdf; resolve(jsPDFModule); };
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-}
+import { jsPDF } from 'jspdf';
 
 // ─── SHOT ZONE LABELS ───
 const ZONE_SHORT = {
@@ -109,8 +97,7 @@ function formatZoneBreakdown(zones, labels) {
 }
 
 export async function exportMatchPDF(match) {
-  const lib = await loadJsPDF();
-  const doc = new lib.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
   const W = 210, H = 297, mg = 15;
   let y = 0;
@@ -254,7 +241,7 @@ export async function exportMatchPDF(match) {
       if (hasZones) {
         const zoneStr = formatZoneBreakdown(p.shotZones, ZONE_SHORT);
         doc.setFontSize(6.5);
-        doc.setFont("helvetica", "italic");
+        doc.setFont("helvetica", "normal");
         doc.setTextColor(...zoneColor);
         doc.text(`Golovi po poziciji: ${zoneStr}`, mg + 12, y, { align: "left" });
         y += 4.5;
@@ -264,7 +251,7 @@ export async function exportMatchPDF(match) {
       if (hasGkZones) {
         const gkStr = formatZoneBreakdown(gkConceded, ZONE_SHORT);
         doc.setFontSize(6.5);
-        doc.setFont("helvetica", "italic");
+        doc.setFont("helvetica", "normal");
         doc.setTextColor(...awayColor);
         doc.text(`Primljeni golovi po poziciji: ${gkStr}`, mg + 12, y, { align: "left" });
         y += 4.5;
@@ -336,7 +323,7 @@ export async function exportMatchPDF(match) {
 
     // Efficiency row
     zx = mg;
-    doc.setFont("helvetica", "italic"); doc.setTextColor(...zoneColor);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(...zoneColor);
     doc.text("Efik.", zx + zcW / 2, y, { align: "center" });
     zx += zcW;
     for (const z of zones) {
